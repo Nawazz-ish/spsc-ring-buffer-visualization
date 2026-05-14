@@ -1,0 +1,393 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>SPSC Ring Buffer — Animated</title>
+<style>
+  * { box-sizing: border-box; }
+  body {
+    font-family: -apple-system, system-ui, sans-serif;
+    background: #0f1419;
+    color: #d4d4d4;
+    margin: 0;
+    padding: 24px;
+    min-height: 100vh;
+  }
+  h1 { color: #fff; margin: 0 0 8px; font-size: 22px; }
+  .sub { color: #8a8a8a; margin-bottom: 24px; font-size: 14px; }
+
+  .stage {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 24px;
+    margin-bottom: 24px;
+  }
+  .thread {
+    background: #1a1f29;
+    border: 1px solid #2a3140;
+    border-radius: 8px;
+    padding: 16px;
+  }
+  .thread h3 { margin: 0 0 12px; font-size: 14px; letter-spacing: 0.5px; }
+  .producer h3 { color: #4ade80; }
+  .consumer h3 { color: #60a5fa; }
+
+  .var {
+    display: flex;
+    justify-content: space-between;
+    padding: 6px 10px;
+    margin: 4px 0;
+    background: #0f1419;
+    border-radius: 4px;
+    font-family: 'SF Mono', Monaco, monospace;
+    font-size: 13px;
+    transition: background 0.4s;
+  }
+  .var.flash { background: #3b2f0f; }
+  .var .name { color: #8a8a8a; }
+  .var .val { color: #fff; font-weight: bold; }
+
+  .buffer {
+    display: flex;
+    justify-content: center;
+    gap: 6px;
+    margin: 32px 0 16px;
+    position: relative;
+    padding-top: 40px;
+  }
+  .slot {
+    width: 56px;
+    height: 56px;
+    background: #1a1f29;
+    border: 2px solid #2a3140;
+    border-radius: 6px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-family: 'SF Mono', Monaco, monospace;
+    font-size: 14px;
+    color: #fff;
+    position: relative;
+    transition: all 0.3s;
+  }
+  .slot.has-data {
+    background: #1e3a2a;
+    border-color: #4ade80;
+  }
+  .slot.writing {
+    background: #3b2f0f;
+    border-color: #fbbf24;
+    transform: scale(1.1);
+  }
+  .slot.reading {
+    background: #1e2a3a;
+    border-color: #60a5fa;
+    transform: scale(1.1);
+  }
+  .slot .idx {
+    position: absolute;
+    bottom: -20px;
+    font-size: 11px;
+    color: #555;
+  }
+
+  .pointer {
+    position: absolute;
+    top: 0;
+    font-family: 'SF Mono', Monaco, monospace;
+    font-size: 11px;
+    text-align: center;
+    transition: left 0.5s cubic-bezier(0.4, 0, 0.2, 1);
+    transform: translateX(-50%);
+  }
+  .pointer.head { color: #4ade80; }
+  .pointer.tail { color: #60a5fa; }
+  .pointer.cached-tail { color: #fbbf24; top: 20px; opacity: 0.7; }
+  .pointer.cached-head { color: #fbbf24; top: 20px; opacity: 0.7; }
+  .pointer .arrow { font-size: 16px; line-height: 1; }
+
+  .controls {
+    display: flex;
+    gap: 12px;
+    justify-content: center;
+    flex-wrap: wrap;
+  }
+  button {
+    background: #2563eb;
+    color: white;
+    border: none;
+    padding: 10px 18px;
+    border-radius: 6px;
+    font-size: 14px;
+    cursor: pointer;
+    font-family: inherit;
+  }
+  button:hover { background: #1d4ed8; }
+  button.push { background: #16a34a; }
+  button.push:hover { background: #15803d; }
+  button.pop { background: #2563eb; }
+  button.reset { background: #6b7280; }
+  button:disabled { opacity: 0.4; cursor: not-allowed; }
+
+  .log {
+    background: #0a0d12;
+    border: 1px solid #2a3140;
+    border-radius: 8px;
+    padding: 16px;
+    margin-top: 24px;
+    height: 240px;
+    overflow-y: auto;
+    font-family: 'SF Mono', Monaco, monospace;
+    font-size: 12px;
+  }
+  .log-entry { padding: 3px 0; border-bottom: 1px solid #1a1f29; }
+  .log-entry.action { color: #fff; }
+  .log-entry.check { color: #8a8a8a; padding-left: 16px; }
+  .log-entry.hit { color: #4ade80; padding-left: 16px; }
+  .log-entry.miss { color: #fbbf24; padding-left: 16px; }
+  .log-entry.fail { color: #ef4444; padding-left: 16px; }
+
+  .legend {
+    display: flex;
+    gap: 20px;
+    justify-content: center;
+    margin-top: 12px;
+    font-size: 12px;
+    color: #8a8a8a;
+    flex-wrap: wrap;
+  }
+  .legend span:before {
+    content: '●';
+    margin-right: 4px;
+    font-size: 14px;
+  }
+  .legend .head:before { color: #4ade80; }
+  .legend .tail:before { color: #60a5fa; }
+  .legend .cached:before { color: #fbbf24; }
+</style>
+</head>
+<body>
+  <h1>SPSC Ring Buffer — Live Animation</h1>
+  <div class="sub">Capacity = 8 (power of 2). One slot is always reserved to distinguish full from empty.</div>
+
+  <div class="stage">
+    <div class="thread producer">
+      <h3>▶ PRODUCER (try_push)</h3>
+      <div class="var"><span class="name">head</span><span class="val" id="head-val">0</span></div>
+      <div class="var"><span class="name">cached_tail_</span><span class="val" id="ctail-val">0</span></div>
+    </div>
+    <div class="thread consumer">
+      <h3>◀ CONSUMER (try_pop)</h3>
+      <div class="var"><span class="name">tail</span><span class="val" id="tail-val">0</span></div>
+      <div class="var"><span class="name">cached_head_</span><span class="val" id="chead-val">0</span></div>
+    </div>
+  </div>
+
+  <div class="buffer" id="buffer"></div>
+
+  <div class="legend">
+    <span class="head">head (producer writes here)</span>
+    <span class="tail">tail (consumer reads here)</span>
+    <span class="cached">cached values (local copies)</span>
+  </div>
+
+  <div class="controls" style="margin-top: 24px;">
+    <button class="push" onclick="tryPush()">Producer: try_push()</button>
+    <button class="pop" onclick="tryPop()">Consumer: try_pop()</button>
+    <button onclick="autoRun()">Auto run</button>
+    <button class="reset" onclick="reset()">Reset</button>
+  </div>
+
+  <div class="log" id="log"></div>
+
+<script>
+const CAPACITY = 8;
+const MASK = CAPACITY - 1;
+
+let head = 0;
+let tail = 0;
+let cached_tail = 0;
+let cached_head = 0;
+let buffer = new Array(CAPACITY).fill(null);
+let counter = 1;
+let busy = false;
+
+const bufEl = document.getElementById('buffer');
+const logEl = document.getElementById('log');
+
+function render() {
+  bufEl.innerHTML = '';
+  for (let i = 0; i < CAPACITY; i++) {
+    const slot = document.createElement('div');
+    slot.className = 'slot';
+    slot.id = `slot-${i}`;
+    if (buffer[i] !== null) slot.classList.add('has-data');
+    slot.innerHTML = `${buffer[i] !== null ? buffer[i] : ''}<span class="idx">[${i}]</span>`;
+    bufEl.appendChild(slot);
+  }
+
+  const slotWidth = 56 + 6;
+  const totalWidth = CAPACITY * slotWidth - 6;
+  const startX = bufEl.offsetWidth / 2 - totalWidth / 2;
+
+  const pointers = [
+    { name: 'head', cls: 'head', idx: head, label: 'head ↓', arrow: '↓' },
+    { name: 'tail', cls: 'tail', idx: tail, label: 'tail ↓', arrow: '↓' },
+    { name: 'ctail', cls: 'cached-tail', idx: cached_tail, label: 'c_tail', arrow: '·' },
+    { name: 'chead', cls: 'cached-head', idx: cached_head, label: 'c_head', arrow: '·' },
+  ];
+  pointers.forEach(p => {
+    const el = document.createElement('div');
+    el.className = `pointer ${p.cls}`;
+    el.innerHTML = `${p.label}<div class="arrow">${p.arrow}</div>`;
+    el.style.left = (startX + p.idx * slotWidth + 28) + 'px';
+    bufEl.appendChild(el);
+  });
+
+  document.getElementById('head-val').textContent = head;
+  document.getElementById('tail-val').textContent = tail;
+  document.getElementById('ctail-val').textContent = cached_tail;
+  document.getElementById('chead-val').textContent = cached_head;
+}
+
+function log(msg, cls = 'action') {
+  const e = document.createElement('div');
+  e.className = `log-entry ${cls}`;
+  e.textContent = msg;
+  logEl.appendChild(e);
+  logEl.scrollTop = logEl.scrollHeight;
+}
+
+function flash(id) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.classList.add('flash');
+  setTimeout(() => el.classList.remove('flash'), 600);
+}
+
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+async function tryPush() {
+  if (busy) return;
+  busy = true;
+  const item = counter++;
+  log(`▶ try_push(${item})`);
+  const next_head = (head + 1) & MASK;
+  log(`  next_head = (${head} + 1) & ${MASK} = ${next_head}`, 'check');
+  await sleep(500);
+
+  log(`  check #1: next_head (${next_head}) == cached_tail_ (${cached_tail}) ?`, 'check');
+  flash('ctail-val');
+  await sleep(700);
+
+  if (next_head === cached_tail) {
+    log(`  yes — cache says FULL. refresh cached_tail from real tail...`, 'miss');
+    await sleep(700);
+    cached_tail = tail;
+    log(`  cached_tail_ ← tail (${tail})`, 'miss');
+    flash('ctail-val');
+    render();
+    await sleep(700);
+
+    log(`  check #2: next_head (${next_head}) == cached_tail_ (${cached_tail}) ?`, 'check');
+    await sleep(700);
+    if (next_head === cached_tail) {
+      log(`  yes — really FULL. push fails ✗`, 'fail');
+      busy = false;
+      return;
+    } else {
+      log(`  no — space opened up, continue`, 'hit');
+    }
+  } else {
+    log(`  no — cache says space available (skipped atomic load) ⚡`, 'hit');
+  }
+  await sleep(500);
+
+  const slot = document.getElementById(`slot-${head}`);
+  slot.classList.add('writing');
+  log(`  buffer[${head}] = ${item}`, 'check');
+  buffer[head] = item;
+  await sleep(700);
+  slot.classList.remove('writing');
+
+  head = next_head;
+  log(`  head.store(${next_head}, release)`, 'check');
+  flash('head-val');
+  render();
+  await sleep(400);
+  busy = false;
+}
+
+async function tryPop() {
+  if (busy) return;
+  busy = true;
+  log(`◀ try_pop()`);
+  await sleep(400);
+
+  log(`  check #1: tail (${tail}) == cached_head_ (${cached_head}) ?`, 'check');
+  flash('chead-val');
+  await sleep(700);
+
+  if (tail === cached_head) {
+    log(`  yes — cache says EMPTY. refresh cached_head from real head...`, 'miss');
+    await sleep(700);
+    cached_head = head;
+    log(`  cached_head_ ← head (${head})`, 'miss');
+    flash('chead-val');
+    render();
+    await sleep(700);
+
+    log(`  check #2: tail (${tail}) == cached_head_ (${cached_head}) ?`, 'check');
+    await sleep(700);
+    if (tail === cached_head) {
+      log(`  yes — really EMPTY. pop fails ✗`, 'fail');
+      busy = false;
+      return;
+    } else {
+      log(`  no — data became available, continue`, 'hit');
+    }
+  } else {
+    log(`  no — cache says data available (skipped atomic load) ⚡`, 'hit');
+  }
+  await sleep(500);
+
+  const slot = document.getElementById(`slot-${tail}`);
+  slot.classList.add('reading');
+  const item = buffer[tail];
+  log(`  read buffer[${tail}] = ${item}`, 'check');
+  await sleep(700);
+  buffer[tail] = null;
+  slot.classList.remove('reading');
+
+  tail = (tail + 1) & MASK;
+  log(`  tail.store(${tail}, release)`, 'check');
+  flash('tail-val');
+  render();
+  await sleep(400);
+  busy = false;
+}
+
+async function autoRun() {
+  for (let i = 0; i < 5; i++) await tryPush();
+  await sleep(300);
+  for (let i = 0; i < 3; i++) await tryPop();
+  await sleep(300);
+  for (let i = 0; i < 6; i++) await tryPush();
+  await sleep(300);
+  for (let i = 0; i < 8; i++) await tryPop();
+}
+
+function reset() {
+  head = 0; tail = 0; cached_tail = 0; cached_head = 0;
+  buffer = new Array(CAPACITY).fill(null);
+  counter = 1;
+  logEl.innerHTML = '';
+  render();
+  log('— reset —');
+}
+
+render();
+log('Ready. Click "try_push" / "try_pop" to step through. "Auto run" plays a sequence.');
+</script>
+</body>
+</html>
