@@ -194,7 +194,8 @@
   <div class="controls" style="margin-top: 24px;">
     <button class="push" onclick="tryPush()">Producer: try_push()</button>
     <button class="pop" onclick="tryPop()">Consumer: try_pop()</button>
-    <button onclick="autoRun()">Auto run</button>
+    <button id="autoBtn" onclick="autoRun()">Auto run</button>
+    <button id="stopBtn" class="reset" onclick="stopAuto()" disabled>Stop</button>
     <button class="reset" onclick="reset()">Reset</button>
   </div>
 
@@ -211,6 +212,7 @@ let cached_head = 0;
 let buffer = new Array(CAPACITY).fill(null);
 let counter = 1;
 let busy = false;
+let autoRunning = false;
 
 const bufEl = document.getElementById('buffer');
 const logEl = document.getElementById('log');
@@ -368,13 +370,34 @@ async function tryPop() {
 }
 
 async function autoRun() {
-  for (let i = 0; i < 5; i++) await tryPush();
-  await sleep(300);
-  for (let i = 0; i < 3; i++) await tryPop();
-  await sleep(300);
-  for (let i = 0; i < 6; i++) await tryPush();
-  await sleep(300);
-  for (let i = 0; i < 8; i++) await tryPop();
+  if (autoRunning) return;
+  autoRunning = true;
+  document.getElementById('autoBtn').disabled = true;
+  document.getElementById('stopBtn').disabled = false;
+  log('— auto run started —');
+
+  const sequence = [
+    ...Array(5).fill('push'),
+    ...Array(3).fill('pop'),
+    ...Array(6).fill('push'),
+    ...Array(8).fill('pop'),
+  ];
+
+  for (const op of sequence) {
+    if (!autoRunning) break;
+    if (op === 'push') await tryPush(); else await tryPop();
+    if (!autoRunning) break;
+    await sleep(200);
+  }
+
+  stopAuto();
+}
+
+function stopAuto() {
+  if (autoRunning) log('— auto run stopped —');
+  autoRunning = false;
+  document.getElementById('autoBtn').disabled = false;
+  document.getElementById('stopBtn').disabled = true;
 }
 
 function reset() {
