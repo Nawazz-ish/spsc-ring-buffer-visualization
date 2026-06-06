@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>SPSC Ring Buffer — Animated</title>
+<title>Lock-Free Queues — SPSC / MPSC / SPMC / MPMC</title>
 <style>
   * { box-sizing: border-box; }
   body {
@@ -14,13 +14,39 @@
     min-height: 100vh;
   }
   h1 { color: #fff; margin: 0 0 8px; font-size: 22px; }
-  .sub { color: #8a8a8a; margin-bottom: 24px; font-size: 14px; }
+  .sub { color: #8a8a8a; margin-bottom: 18px; font-size: 14px; max-width: 900px; }
+
+  /* ---- mode tabs ---- */
+  .tabs { display: flex; gap: 8px; margin-bottom: 18px; flex-wrap: wrap; }
+  .tab {
+    padding: 8px 16px;
+    background: #1a1f29;
+    border: 1px solid #2a3140;
+    border-radius: 6px;
+    cursor: pointer;
+    color: #8a8a8a;
+    font-weight: bold;
+    font-size: 13px;
+    letter-spacing: 0.5px;
+  }
+  .tab:hover { color: #d4d4d4; }
+  .tab.active { background: #2563eb; color: #fff; border-color: #2563eb; }
+  .tab small { display: block; font-weight: normal; font-size: 10px; opacity: 0.8; letter-spacing: 0; }
+
+  /* ---- two-column main layout: viz left, code right ---- */
+  .main {
+    display: grid;
+    grid-template-columns: minmax(560px, 1fr) 440px;
+    gap: 24px;
+    align-items: start;
+  }
+  @media (max-width: 1100px) { .main { grid-template-columns: 1fr; } }
 
   .stage {
     display: grid;
     grid-template-columns: 1fr 1fr;
     gap: 24px;
-    margin-bottom: 24px;
+    margin-bottom: 16px;
   }
   .thread {
     background: #1a1f29;
@@ -51,9 +77,9 @@
     display: flex;
     justify-content: center;
     gap: 6px;
-    margin: 32px 0 16px;
+    margin: 40px 0 16px;
     position: relative;
-    padding-top: 40px;
+    padding-top: 44px;
   }
   .slot {
     width: 56px;
@@ -70,26 +96,12 @@
     position: relative;
     transition: all 0.3s;
   }
-  .slot.has-data {
-    background: #1e3a2a;
-    border-color: #4ade80;
-  }
-  .slot.writing {
-    background: #3b2f0f;
-    border-color: #fbbf24;
-    transform: scale(1.1);
-  }
-  .slot.reading {
-    background: #1e2a3a;
-    border-color: #60a5fa;
-    transform: scale(1.1);
-  }
-  .slot .idx {
-    position: absolute;
-    bottom: -20px;
-    font-size: 11px;
-    color: #555;
-  }
+  .slot.has-data { background: #1e3a2a; border-color: #4ade80; }
+  .slot.writing { background: #3b2f0f; border-color: #fbbf24; transform: scale(1.1); }
+  .slot.reading { background: #1e2a3a; border-color: #60a5fa; transform: scale(1.1); }
+  .slot .idx { position: absolute; bottom: -20px; font-size: 11px; color: #555; }
+  .slot .seq { position: absolute; top: -18px; font-size: 10px; color: #a78bfa; }
+  .slot .ready { position: absolute; top: 3px; right: 5px; font-size: 9px; color: #4ade80; }
 
   .pointer {
     position: absolute;
@@ -102,45 +114,31 @@
   }
   .pointer.head { color: #4ade80; }
   .pointer.tail { color: #60a5fa; }
-  .pointer.cached-tail { color: #fbbf24; top: 20px; opacity: 0.7; }
-  .pointer.cached-head { color: #fbbf24; top: 20px; opacity: 0.7; }
+  .pointer.cached-tail { color: #fbbf24; top: 22px; opacity: 0.7; }
+  .pointer.cached-head { color: #fbbf24; top: 22px; opacity: 0.7; }
   .pointer .arrow { font-size: 16px; line-height: 1; }
 
-  .controls {
-    display: flex;
-    gap: 12px;
-    justify-content: center;
-    flex-wrap: wrap;
-  }
+  .controls { display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; margin-top: 24px; }
   button {
-    background: #2563eb;
-    color: white;
-    border: none;
-    padding: 10px 18px;
-    border-radius: 6px;
-    font-size: 14px;
-    cursor: pointer;
-    font-family: inherit;
+    background: #2563eb; color: white; border: none;
+    padding: 10px 16px; border-radius: 6px; font-size: 13px;
+    cursor: pointer; font-family: inherit;
   }
   button:hover { background: #1d4ed8; }
   button.push { background: #16a34a; }
   button.push:hover { background: #15803d; }
   button.pop { background: #2563eb; }
+  button.race { background: #7c3aed; }
+  button.race:hover { background: #6d28d9; }
   button.reset { background: #6b7280; }
   button:disabled { opacity: 0.4; cursor: not-allowed; }
 
   .log {
-    background: #0a0d12;
-    border: 1px solid #2a3140;
-    border-radius: 8px;
-    padding: 16px;
-    margin-top: 24px;
-    height: 240px;
-    overflow-y: auto;
-    font-family: 'SF Mono', Monaco, monospace;
-    font-size: 12px;
+    background: #0a0d12; border: 1px solid #2a3140; border-radius: 8px;
+    padding: 16px; margin-top: 24px; height: 220px; overflow-y: auto;
+    font-family: 'SF Mono', Monaco, monospace; font-size: 12px;
   }
-  .log-entry { padding: 3px 0; border-bottom: 1px solid #1a1f29; }
+  .log-entry { padding: 3px 0; border-bottom: 1px solid #1a1f29; white-space: pre-wrap; }
   .log-entry.action { color: #fff; }
   .log-entry.check { color: #8a8a8a; padding-left: 16px; }
   .log-entry.hit { color: #4ade80; padding-left: 16px; }
@@ -148,108 +146,264 @@
   .log-entry.fail { color: #ef4444; padding-left: 16px; }
 
   .legend {
-    display: flex;
-    gap: 20px;
-    justify-content: center;
-    margin-top: 12px;
-    font-size: 12px;
-    color: #8a8a8a;
-    flex-wrap: wrap;
+    display: flex; gap: 20px; justify-content: center; margin-top: 12px;
+    font-size: 12px; color: #8a8a8a; flex-wrap: wrap;
   }
-  .legend span:before {
-    content: '●';
-    margin-right: 4px;
-    font-size: 14px;
-  }
+  .legend span:before { content: '●'; margin-right: 4px; font-size: 14px; }
   .legend .head:before { color: #4ade80; }
   .legend .tail:before { color: #60a5fa; }
   .legend .cached:before { color: #fbbf24; }
+  .legend .sq:before { color: #a78bfa; }
+
+  /* ---- code panel ---- */
+  .code-panel {
+    background: #0a0d12; border: 1px solid #2a3140; border-radius: 8px;
+    padding: 14px; position: sticky; top: 24px;
+  }
+  .code-block { margin-bottom: 18px; }
+  .code-block:last-child { margin-bottom: 0; }
+  .code-block h4 {
+    margin: 0 0 8px; font-size: 12px; letter-spacing: 0.5px;
+    font-family: 'SF Mono', Monaco, monospace;
+  }
+  .code-block.push h4 { color: #4ade80; }
+  .code-block.pop h4 { color: #60a5fa; }
+  .cl {
+    font-family: 'SF Mono', Monaco, monospace; font-size: 12px;
+    white-space: pre; padding: 1px 8px; border-radius: 3px;
+    color: #c8d3e0; border-left: 3px solid transparent; line-height: 1.55;
+  }
+  .cl.active { background: #3b2f0f; color: #fff; border-left-color: #fbbf24; }
+  .cl .cmt { color: #5a6678; }
 </style>
 </head>
 <body>
-  <h1>SPSC Ring Buffer — Live Animation</h1>
-  <div class="sub">Capacity = 8 (power of 2). One slot is always reserved to distinguish full from empty.</div>
+  <h1>Lock-Free Queues — Live Animation</h1>
+  <div class="sub" id="subtitle"></div>
 
-  <div class="stage">
-    <div class="thread producer">
-      <h3>▶ PRODUCER (try_push)</h3>
-      <div class="var"><span class="name">head</span><span class="val" id="head-val">0</span></div>
-      <div class="var"><span class="name">cached_tail_</span><span class="val" id="ctail-val">0</span></div>
+  <div class="tabs" id="tabs">
+    <div class="tab" data-mode="spsc">SPSC<small>1 prod · 1 cons</small></div>
+    <div class="tab" data-mode="mpsc">MPSC<small>N prod · 1 cons</small></div>
+    <div class="tab" data-mode="spmc">SPMC<small>1 prod · N cons</small></div>
+    <div class="tab" data-mode="mpmc">MPMC<small>N prod · N cons</small></div>
+  </div>
+
+  <div class="main">
+    <div class="viz">
+      <div class="stage" id="stage"></div>
+
+      <div class="buffer" id="buffer"></div>
+
+      <div class="legend" id="legend"></div>
+
+      <div class="controls" id="controls"></div>
+
+      <div class="log" id="log"></div>
     </div>
-    <div class="thread consumer">
-      <h3>◀ CONSUMER (try_pop)</h3>
-      <div class="var"><span class="name">tail</span><span class="val" id="tail-val">0</span></div>
-      <div class="var"><span class="name">cached_head_</span><span class="val" id="chead-val">0</span></div>
+
+    <div class="code-panel">
+      <div class="code-block push">
+        <h4 id="push-title">try_push</h4>
+        <div id="push-code"></div>
+      </div>
+      <div class="code-block pop">
+        <h4 id="pop-title">try_pop</h4>
+        <div id="pop-code"></div>
+      </div>
     </div>
   </div>
-
-  <div class="buffer" id="buffer"></div>
-
-  <div class="legend">
-    <span class="head">head (producer writes here)</span>
-    <span class="tail">tail (consumer reads here)</span>
-    <span class="cached">cached values (local copies)</span>
-  </div>
-
-  <div class="controls" style="margin-top: 24px;">
-    <button class="push" onclick="tryPush()">Producer: try_push()</button>
-    <button class="pop" onclick="tryPop()">Consumer: try_pop()</button>
-    <button id="autoBtn" onclick="autoRun()">Auto run</button>
-    <button id="stopBtn" class="reset" onclick="stopAuto()" disabled>Stop</button>
-    <button class="reset" onclick="reset()">Reset</button>
-  </div>
-
-  <div class="log" id="log"></div>
 
 <script>
 const CAPACITY = 8;
 const MASK = CAPACITY - 1;
 
-let head = 0;
-let tail = 0;
-let cached_tail = 0;
-let cached_head = 0;
-let buffer = new Array(CAPACITY).fill(null);
-let counter = 1;
-let busy = false;
-let autoRunning = false;
+// ---- shared state (interpretation depends on mode) ----
+let head, tail, cached_tail, cached_head, enqueue_pos, dequeue_pos;
+let buffer, ready, seq;
+let counter, busy, raceActive, autoRunning;
+let mode = 'spsc';
 
 const bufEl = document.getElementById('buffer');
 const logEl = document.getElementById('log');
 
-function render() {
-  bufEl.innerHTML = '';
-  for (let i = 0; i < CAPACITY; i++) {
-    const slot = document.createElement('div');
-    slot.className = 'slot';
-    slot.id = `slot-${i}`;
-    if (buffer[i] !== null) slot.classList.add('has-data');
-    slot.innerHTML = `${buffer[i] !== null ? buffer[i] : ''}<span class="idx">[${i}]</span>`;
-    bufEl.appendChild(slot);
-  }
+// =====================================================================
+//  Per-mode configuration
+// =====================================================================
+const MODE_CFG = {
+  spsc: { producers: ['P'],        consumers: ['C'] },
+  mpsc: { producers: ['P1','P2'],  consumers: ['C'],        racePush: true },
+  spmc: { producers: ['P'],        consumers: ['C1','C2'],  racePop: true },
+  mpmc: { producers: ['P1','P2'],  consumers: ['C1','C2'],  racePush: true, racePop: true },
+};
 
-  const slotWidth = 56 + 6;
-  const totalWidth = CAPACITY * slotWidth - 6;
-  const startX = bufEl.offsetWidth / 2 - totalWidth / 2;
+const SUBTITLE = {
+  spsc: 'Single Producer · Single Consumer — fully lock-free, no CAS. Each side owns one index; cached pointers skip atomic loads on the fast path. Capacity 8, one slot reserved to tell full from empty.',
+  mpsc: 'Multiple Producers · Single Consumer — producers CAS head to reserve a slot, then publish it via a per-slot ready flag. The lone consumer reads tail freely. Capacity 8.',
+  spmc: 'Single Producer · Multiple Consumers — the lone producer writes head freely; consumers CAS tail to claim a slot. Capacity 8.',
+  mpmc: 'Multiple Producers · Multiple Consumers — Dmitry Vyukov’s bounded queue. Every cell carries a sequence number that gates access; both sides CAS their position. Capacity 8.',
+};
 
-  const pointers = [
-    { name: 'head', cls: 'head', idx: head, label: 'head ↓', arrow: '↓' },
-    { name: 'tail', cls: 'tail', idx: tail, label: 'tail ↓', arrow: '↓' },
-    { name: 'ctail', cls: 'cached-tail', idx: cached_tail, label: 'c_tail', arrow: '·' },
-    { name: 'chead', cls: 'cached-head', idx: cached_head, label: 'c_head', arrow: '·' },
-  ];
-  pointers.forEach(p => {
-    const el = document.createElement('div');
-    el.className = `pointer ${p.cls}`;
-    el.innerHTML = `${p.label}<div class="arrow">${p.arrow}</div>`;
-    el.style.left = (startX + p.idx * slotWidth + 28) + 'px';
-    bufEl.appendChild(el);
-  });
+const HINT = {
+  spsc: 'Relaxed loads of your own index, acquire/release across the boundary. Watch ⚡ cache hits skip the atomic load.',
+  mpsc: 'Producers race to reserve a slot via CAS on head. Hit "⚡ Race push" to watch one CAS fail and retry. The consumer waits on the ready flag before reading.',
+  spmc: 'Consumers race to claim a slot via CAS on tail. Hit "⚡ Race pop" to watch contention and a retry.',
+  mpmc: 'Per-cell sequence numbers: dif==0 means it is your turn, dif<0 means full/empty, dif>0 means another thread is mid-op so reload. Try the ⚡ Race buttons.',
+};
 
-  document.getElementById('head-val').textContent = head;
-  document.getElementById('tail-val').textContent = tail;
-  document.getElementById('ctail-val').textContent = cached_tail;
-  document.getElementById('chead-val').textContent = cached_head;
+const VARS = {
+  spsc: { prod: [['head-val','head'],['ctail-val','cached_tail_']], cons: [['tail-val','tail'],['chead-val','cached_head_']] },
+  mpsc: { prod: [['head-val','head  ⟳CAS']], cons: [['tail-val','tail']] },
+  spmc: { prod: [['head-val','head']], cons: [['tail-val','tail  ⟳CAS']] },
+  mpmc: { prod: [['enq-val','enqueue_pos  ⟳CAS']], cons: [['deq-val','dequeue_pos  ⟳CAS']] },
+};
+
+// =====================================================================
+//  Code snippets (line index must match the step() calls below)
+// =====================================================================
+const CODE = {
+  spsc: {
+    push: [
+      'bool try_push(T item) {',
+      '  size_t h = head;',
+      '  size_t next = (h + 1) & MASK;',
+      '  if (next == cached_tail_) {',
+      '    cached_tail_ = tail.load(acquire);',
+      '    if (next == cached_tail_)',
+      '      return false;            // FULL',
+      '  }',
+      '  buffer[h] = item;',
+      '  head.store(next, release);',
+      '  return true;',
+      '}',
+    ],
+    pop: [
+      'bool try_pop(T& out) {',
+      '  size_t t = tail;',
+      '  if (t == cached_head_) {',
+      '    cached_head_ = head.load(acquire);',
+      '    if (t == cached_head_)',
+      '      return false;            // EMPTY',
+      '  }',
+      '  out = buffer[t];',
+      '  tail.store((t + 1) & MASK, release);',
+      '  return true;',
+      '}',
+    ],
+  },
+  mpsc: {
+    push: [
+      'bool try_push(T item) {',
+      '  size_t h = head.load(relaxed);',
+      '  for (;;) {',
+      '    size_t next = (h + 1) & MASK;',
+      '    if (next == tail.load(acquire))',
+      '      return false;            // FULL',
+      '    if (head.CAS(h, next))     // reserve slot h',
+      '      break;',
+      '    // CAS failed: another producer won, retry',
+      '  }',
+      '  buffer[h] = item;',
+      '  ready[h].store(true, release);',
+      '  return true;',
+      '}',
+    ],
+    pop: [
+      'bool try_pop(T& out) {',
+      '  size_t t = tail.load(relaxed);',
+      '  if (t == head.load(acquire))',
+      '    return false;              // EMPTY',
+      '  while (!ready[t].load(acquire))',
+      '    ;  // wait for producer to publish',
+      '  out = buffer[t];',
+      '  ready[t].store(false, relaxed);',
+      '  tail.store((t + 1) & MASK, release);',
+      '  return true;',
+      '}',
+    ],
+  },
+  spmc: {
+    push: [
+      'bool try_push(T item) {',
+      '  size_t h = head.load(relaxed);',
+      '  size_t next = (h + 1) & MASK;',
+      '  if (next == tail.load(acquire))',
+      '    return false;              // FULL',
+      '  buffer[h] = item;',
+      '  ready[h].store(true, release);',
+      '  head.store(next, release);',
+      '  return true;',
+      '}',
+    ],
+    pop: [
+      'bool try_pop(T& out) {',
+      '  size_t t = tail.load(relaxed);',
+      '  for (;;) {',
+      '    if (t == head.load(acquire))',
+      '      return false;            // EMPTY',
+      '    size_t next = (t + 1) & MASK;',
+      '    if (tail.CAS(t, next))     // claim slot t',
+      '      break;',
+      '    // CAS failed: another consumer won, retry',
+      '  }',
+      '  out = buffer[t];',
+      '  return true;',
+      '}',
+    ],
+  },
+  mpmc: {
+    push: [
+      'bool try_push(T item) {',
+      '  size_t pos = enqueue_pos.load(relaxed);',
+      '  Cell* c;',
+      '  for (;;) {',
+      '    c = &cells[pos & MASK];',
+      '    size_t seq = c->seq.load(acquire);',
+      '    intptr_t dif = seq - pos;',
+      '    if (dif == 0) {',
+      '      if (enqueue_pos.CAS(pos, pos + 1)) break;',
+      '    } else if (dif < 0) {',
+      '      return false;            // FULL',
+      '    } else {',
+      '      pos = enqueue_pos.load(relaxed);',
+      '    }',
+      '  }',
+      '  c->data = item;',
+      '  c->seq.store(pos + 1, release);',
+      '  return true;',
+      '}',
+    ],
+    pop: [
+      'bool try_pop(T& out) {',
+      '  size_t pos = dequeue_pos.load(relaxed);',
+      '  Cell* c;',
+      '  for (;;) {',
+      '    c = &cells[pos & MASK];',
+      '    size_t seq = c->seq.load(acquire);',
+      '    intptr_t dif = seq - (pos + 1);',
+      '    if (dif == 0) {',
+      '      if (dequeue_pos.CAS(pos, pos + 1)) break;',
+      '    } else if (dif < 0) {',
+      '      return false;            // EMPTY',
+      '    } else {',
+      '      pos = dequeue_pos.load(relaxed);',
+      '    }',
+      '  }',
+      '  out = c->data;',
+      '  c->seq.store(pos + MASK + 1, release);',
+      '  return true;',
+      '}',
+    ],
+  },
+};
+
+// =====================================================================
+//  Helpers
+// =====================================================================
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+const tag = tid => `[${tid}] `;
+
+function escapeHtml(s) {
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
 function log(msg, cls = 'action') {
@@ -263,110 +417,410 @@ function log(msg, cls = 'action') {
 function flash(id) {
   const el = document.getElementById(id);
   if (!el) return;
-  el.classList.add('flash');
-  setTimeout(() => el.classList.remove('flash'), 600);
+  const row = el.closest('.var') || el;
+  row.classList.add('flash');
+  setTimeout(() => row.classList.remove('flash'), 600);
 }
 
-const sleep = ms => new Promise(r => setTimeout(r, ms));
+function hl(op, line) {
+  if (raceActive) return;          // during a concurrent race, line highlight is ambiguous
+  const block = document.getElementById(op + '-code');
+  if (!block) return;
+  block.querySelectorAll('.cl').forEach(el => el.classList.remove('active'));
+  const t = document.getElementById(`${op}-line-${line}`);
+  if (t) t.classList.add('active');
+}
 
-async function tryPush() {
-  if (busy) return;
-  busy = true;
+// highlight a code line, optionally log, then pause
+async function step(op, line, msg, cls, ms = 700) {
+  hl(op, line);
+  if (msg) log(msg, cls);
+  await sleep(ms);
+}
+
+// =====================================================================
+//  Rendering
+// =====================================================================
+function render() {
+  bufEl.innerHTML = '';
+  for (let i = 0; i < CAPACITY; i++) {
+    const slot = document.createElement('div');
+    slot.className = 'slot';
+    slot.id = `slot-${i}`;
+    if (buffer[i] !== null) slot.classList.add('has-data');
+    let extra = `<span class="idx">[${i}]</span>`;
+    if (mode === 'mpmc') extra += `<span class="seq">s=${seq[i]}</span>`;
+    if ((mode === 'mpsc' || mode === 'spmc') && ready[i]) extra += `<span class="ready">●</span>`;
+    slot.innerHTML = `${buffer[i] !== null ? buffer[i] : ''}${extra}`;
+    bufEl.appendChild(slot);
+  }
+
+  const slotWidth = 56 + 6;
+  const totalWidth = CAPACITY * slotWidth - 6;
+  const startX = bufEl.offsetWidth / 2 - totalWidth / 2;
+
+  const ptrs = [];
+  if (mode === 'mpmc') {
+    ptrs.push({ cls: 'head', idx: enqueue_pos & MASK, label: 'enq ↓', arrow: '↓' });
+    ptrs.push({ cls: 'tail', idx: dequeue_pos & MASK, label: 'deq ↓', arrow: '↓' });
+  } else {
+    ptrs.push({ cls: 'head', idx: head, label: 'head ↓', arrow: '↓' });
+    ptrs.push({ cls: 'tail', idx: tail, label: 'tail ↓', arrow: '↓' });
+    if (mode === 'spsc') {
+      ptrs.push({ cls: 'cached-tail', idx: cached_tail, label: 'c_tail', arrow: '·' });
+      ptrs.push({ cls: 'cached-head', idx: cached_head, label: 'c_head', arrow: '·' });
+    }
+  }
+  ptrs.forEach(p => {
+    const el = document.createElement('div');
+    el.className = `pointer ${p.cls}`;
+    el.innerHTML = `${p.label}<div class="arrow">${p.arrow}</div>`;
+    el.style.left = (startX + p.idx * slotWidth + 28) + 'px';
+    bufEl.appendChild(el);
+  });
+
+  updateVars();
+}
+
+function updateVars() {
+  const set = (id, v) => { const e = document.getElementById(id); if (e) e.textContent = v; };
+  set('head-val', head); set('tail-val', tail);
+  set('ctail-val', cached_tail); set('chead-val', cached_head);
+  set('enq-val', enqueue_pos); set('deq-val', dequeue_pos);
+}
+
+// =====================================================================
+//  SPSC
+// =====================================================================
+async function pushSPSC(tid) {
   const item = counter++;
-  log(`▶ try_push(${item})`);
-  const next_head = (head + 1) & MASK;
-  log(`  next_head = (${head} + 1) & ${MASK} = ${next_head}`, 'check');
-  await sleep(500);
-
-  log(`  check #1: next_head (${next_head}) == cached_tail_ (${cached_tail}) ?`, 'check');
+  log(`${tag(tid)}▶ try_push(${item})`);
+  await step('push', 0, null, 'check', 250);
+  const h = head;
+  await step('push', 1, `  h = head = ${h}`, 'check');
+  const next = (h + 1) & MASK;
+  await step('push', 2, `  next = (${h} + 1) & ${MASK} = ${next}`, 'check');
+  await step('push', 3, `  next(${next}) == cached_tail_(${cached_tail}) ?`, 'check');
   flash('ctail-val');
-  await sleep(700);
-
-  if (next_head === cached_tail) {
-    log(`  yes — cache says FULL. refresh cached_tail from real tail...`, 'miss');
-    await sleep(700);
+  if (next === cached_tail) {
+    await step('push', 4, `  cache says FULL — refresh cached_tail_ from real tail`, 'miss');
     cached_tail = tail;
-    log(`  cached_tail_ ← tail (${tail})`, 'miss');
-    flash('ctail-val');
-    render();
-    await sleep(700);
-
-    log(`  check #2: next_head (${next_head}) == cached_tail_ (${cached_tail}) ?`, 'check');
-    await sleep(700);
-    if (next_head === cached_tail) {
-      log(`  yes — really FULL. push fails ✗`, 'fail');
-      busy = false;
-      return;
-    } else {
-      log(`  no — space opened up, continue`, 'hit');
+    flash('ctail-val'); render();
+    await step('push', 5, `  cached_tail_ ← tail (${tail}); next(${next}) == cached_tail_(${cached_tail}) ?`, 'check');
+    if (next === cached_tail) {
+      await step('push', 6, `  really FULL — push fails ✗`, 'fail');
+      return false;
     }
+    await step('push', 7, `  no — space opened up, continue`, 'hit');
   } else {
-    log(`  no — cache says space available (skipped atomic load) ⚡`, 'hit');
+    await step('push', 3, `  no — cache says space (skipped atomic load) ⚡`, 'hit');
   }
-  await sleep(500);
-
-  const slot = document.getElementById(`slot-${head}`);
+  const slot = document.getElementById(`slot-${h}`);
   slot.classList.add('writing');
-  log(`  buffer[${head}] = ${item}`, 'check');
-  buffer[head] = item;
-  await sleep(700);
+  buffer[h] = item;
+  await step('push', 8, `  buffer[${h}] = ${item}`, 'check');
   slot.classList.remove('writing');
+  head = next;
+  await step('push', 9, `  head.store(${next}, release)`, 'check');
+  flash('head-val'); render();
+  await step('push', 10, `  return true ✓`, 'hit', 300);
+  return true;
+}
 
-  head = next_head;
-  log(`  head.store(${next_head}, release)`, 'check');
-  flash('head-val');
+async function popSPSC(tid) {
+  log(`${tag(tid)}◀ try_pop()`);
+  await step('pop', 0, null, 'check', 250);
+  const t = tail;
+  await step('pop', 1, `  t = tail = ${t}`, 'check');
+  await step('pop', 2, `  t(${t}) == cached_head_(${cached_head}) ?`, 'check');
+  flash('chead-val');
+  if (t === cached_head) {
+    await step('pop', 3, `  cache says EMPTY — refresh cached_head_ from real head`, 'miss');
+    cached_head = head;
+    flash('chead-val'); render();
+    await step('pop', 4, `  cached_head_ ← head (${head}); t(${t}) == cached_head_(${cached_head}) ?`, 'check');
+    if (t === cached_head) {
+      await step('pop', 5, `  really EMPTY — pop fails ✗`, 'fail');
+      return false;
+    }
+    await step('pop', 6, `  no — data became available, continue`, 'hit');
+  } else {
+    await step('pop', 2, `  no — cache says data ready (skipped atomic load) ⚡`, 'hit');
+  }
+  const slot = document.getElementById(`slot-${t}`);
+  slot.classList.add('reading');
+  const item = buffer[t];
+  await step('pop', 7, `  out = buffer[${t}] = ${item}`, 'check');
+  buffer[t] = null;
+  slot.classList.remove('reading');
+  tail = (t + 1) & MASK;
+  await step('pop', 8, `  tail.store(${tail}, release)`, 'check');
+  flash('tail-val'); render();
+  await step('pop', 9, `  return true ✓`, 'hit', 300);
+  return true;
+}
+
+// =====================================================================
+//  MPSC  (producers CAS head; single consumer waits on ready flag)
+// =====================================================================
+async function pushMPSC(tid) {
+  const item = counter++;
+  log(`${tag(tid)}▶ try_push(${item})`);
+  let h = head;
+  await step('push', 1, `${tag(tid)} h = head = ${h}`, 'check');
+  let next;
+  for (;;) {
+    next = (h + 1) & MASK;
+    await step('push', 3, `${tag(tid)} next = ${next}`, 'check');
+    await step('push', 4, `${tag(tid)} next(${next}) == tail(${tail}) ?`, 'check');
+    if (next === tail) {
+      await step('push', 5, `${tag(tid)} FULL — push fails ✗`, 'fail');
+      return false;
+    }
+    await step('push', 6, `${tag(tid)} CAS head: expect ${h} → ${next}`, 'check');
+    if (head === h) {                 // atomic compare-and-swap (no await inside)
+      head = next;
+      await step('push', 7, `${tag(tid)} CAS ok — reserved slot ${h}`, 'hit');
+      flash('head-val'); render();
+      break;
+    } else {
+      await step('push', 8, `${tag(tid)} CAS FAILED (head is now ${head}) — retry`, 'miss');
+      h = head;
+    }
+  }
+  const slot = document.getElementById(`slot-${h}`);
+  slot.classList.add('writing');
+  buffer[h] = item;
+  await step('push', 10, `${tag(tid)} buffer[${h}] = ${item}`, 'check');
+  slot.classList.remove('writing');
+  ready[h] = true;
+  await step('push', 11, `${tag(tid)} ready[${h}] = true — published`, 'hit');
   render();
-  await sleep(400);
+  await step('push', 12, `${tag(tid)} return true ✓`, 'hit', 300);
+  return true;
+}
+
+async function popMPSC(tid) {
+  log(`${tag(tid)}◀ try_pop()`);
+  const t = tail;
+  await step('pop', 1, `${tag(tid)} t = tail = ${t}`, 'check');
+  await step('pop', 2, `${tag(tid)} t(${t}) == head(${head}) ?`, 'check');
+  if (t === head) {
+    await step('pop', 3, `${tag(tid)} EMPTY — pop fails ✗`, 'fail');
+    return false;
+  }
+  await step('pop', 4, `${tag(tid)} ready[${t}] ? = ${ready[t]}`, 'check');
+  if (!ready[t]) {
+    await step('pop', 5, `${tag(tid)} slot reserved but not yet published — would spin`, 'miss');
+    return false;
+  }
+  const slot = document.getElementById(`slot-${t}`);
+  slot.classList.add('reading');
+  const item = buffer[t];
+  await step('pop', 6, `${tag(tid)} out = buffer[${t}] = ${item}`, 'check');
+  buffer[t] = null;
+  slot.classList.remove('reading');
+  ready[t] = false;
+  await step('pop', 7, `${tag(tid)} ready[${t}] = false`, 'check');
+  tail = (t + 1) & MASK;
+  await step('pop', 8, `${tag(tid)} tail.store(${tail}, release)`, 'check');
+  flash('tail-val'); render();
+  await step('pop', 9, `${tag(tid)} return true ✓`, 'hit', 300);
+  return true;
+}
+
+// =====================================================================
+//  SPMC  (single producer writes head; consumers CAS tail)
+// =====================================================================
+async function pushSPMC(tid) {
+  const item = counter++;
+  log(`${tag(tid)}▶ try_push(${item})`);
+  const h = head;
+  await step('push', 1, `${tag(tid)} h = head = ${h}`, 'check');
+  const next = (h + 1) & MASK;
+  await step('push', 2, `${tag(tid)} next = ${next}`, 'check');
+  await step('push', 3, `${tag(tid)} next(${next}) == tail(${tail}) ?`, 'check');
+  if (next === tail) {
+    await step('push', 4, `${tag(tid)} FULL — push fails ✗`, 'fail');
+    return false;
+  }
+  const slot = document.getElementById(`slot-${h}`);
+  slot.classList.add('writing');
+  buffer[h] = item;
+  await step('push', 5, `${tag(tid)} buffer[${h}] = ${item}`, 'check');
+  slot.classList.remove('writing');
+  ready[h] = true;
+  await step('push', 6, `${tag(tid)} ready[${h}] = true`, 'hit');
+  head = next;
+  await step('push', 7, `${tag(tid)} head.store(${next}, release)`, 'check');
+  flash('head-val'); render();
+  await step('push', 8, `${tag(tid)} return true ✓`, 'hit', 300);
+  return true;
+}
+
+async function popSPMC(tid) {
+  log(`${tag(tid)}◀ try_pop()`);
+  let t = tail;
+  await step('pop', 1, `${tag(tid)} t = tail = ${t}`, 'check');
+  for (;;) {
+    await step('pop', 3, `${tag(tid)} t(${t}) == head(${head}) ?`, 'check');
+    if (t === head) {
+      await step('pop', 4, `${tag(tid)} EMPTY — pop fails ✗`, 'fail');
+      return false;
+    }
+    const next = (t + 1) & MASK;
+    await step('pop', 5, `${tag(tid)} next = ${next}`, 'check');
+    await step('pop', 6, `${tag(tid)} CAS tail: expect ${t} → ${next}`, 'check');
+    if (tail === t) {                 // atomic compare-and-swap
+      tail = next;
+      await step('pop', 7, `${tag(tid)} CAS ok — claimed slot ${t}`, 'hit');
+      flash('tail-val'); render();
+      break;
+    } else {
+      await step('pop', 8, `${tag(tid)} CAS FAILED (tail is now ${tail}) — retry`, 'miss');
+      t = tail;
+    }
+  }
+  const slot = document.getElementById(`slot-${t}`);
+  slot.classList.add('reading');
+  const item = buffer[t];
+  await step('pop', 10, `${tag(tid)} out = buffer[${t}] = ${item}`, 'check');
+  buffer[t] = null;
+  slot.classList.remove('reading');
+  ready[t] = false;
+  render();
+  await step('pop', 11, `${tag(tid)} return true ✓`, 'hit', 300);
+  return true;
+}
+
+// =====================================================================
+//  MPMC  (Vyukov bounded queue with per-cell sequence numbers)
+// =====================================================================
+async function pushMPMC(tid) {
+  const item = counter++;
+  log(`${tag(tid)}▶ try_push(${item})`);
+  let pos = enqueue_pos;
+  await step('push', 1, `${tag(tid)} pos = enqueue_pos = ${pos}`, 'check');
+  let idx;
+  for (;;) {
+    idx = pos & MASK;
+    await step('push', 4, `${tag(tid)} cell = cells[${pos} & ${MASK} = ${idx}]`, 'check');
+    const s = seq[idx];
+    await step('push', 5, `${tag(tid)} seq = cells[${idx}].seq = ${s}`, 'check');
+    const dif = s - pos;
+    await step('push', 6, `${tag(tid)} dif = seq(${s}) - pos(${pos}) = ${dif}`, 'check');
+    if (dif === 0) {
+      await step('push', 7, `${tag(tid)} dif==0 → try CAS enqueue_pos ${pos} → ${pos + 1}`, 'check');
+      if (enqueue_pos === pos) {       // atomic CAS
+        enqueue_pos = pos + 1;
+        await step('push', 8, `${tag(tid)} CAS ok — own cell ${idx}`, 'hit');
+        flash('enq-val'); render();
+        break;
+      } else {
+        await step('push', 8, `${tag(tid)} CAS failed (enqueue_pos is ${enqueue_pos}) — reload`, 'miss');
+        pos = enqueue_pos;
+      }
+    } else if (dif < 0) {
+      await step('push', 10, `${tag(tid)} dif<0 → FULL, push fails ✗`, 'fail');
+      return false;
+    } else {
+      await step('push', 12, `${tag(tid)} dif>0 → another producer mid-op, reload pos`, 'miss');
+      pos = enqueue_pos;
+    }
+  }
+  const slot = document.getElementById(`slot-${idx}`);
+  slot.classList.add('writing');
+  buffer[idx] = item;
+  await step('push', 15, `${tag(tid)} cell.data = ${item}`, 'check');
+  slot.classList.remove('writing');
+  seq[idx] = pos + 1;
+  await step('push', 16, `${tag(tid)} cell.seq.store(${pos + 1}) — published`, 'hit');
+  render();
+  await step('push', 17, `${tag(tid)} return true ✓`, 'hit', 300);
+  return true;
+}
+
+async function popMPMC(tid) {
+  log(`${tag(tid)}◀ try_pop()`);
+  let pos = dequeue_pos;
+  await step('pop', 1, `${tag(tid)} pos = dequeue_pos = ${pos}`, 'check');
+  let idx;
+  for (;;) {
+    idx = pos & MASK;
+    await step('pop', 4, `${tag(tid)} cell = cells[${pos} & ${MASK} = ${idx}]`, 'check');
+    const s = seq[idx];
+    await step('pop', 5, `${tag(tid)} seq = cells[${idx}].seq = ${s}`, 'check');
+    const dif = s - (pos + 1);
+    await step('pop', 6, `${tag(tid)} dif = seq(${s}) - (pos+1)(${pos + 1}) = ${dif}`, 'check');
+    if (dif === 0) {
+      await step('pop', 7, `${tag(tid)} dif==0 → try CAS dequeue_pos ${pos} → ${pos + 1}`, 'check');
+      if (dequeue_pos === pos) {       // atomic CAS
+        dequeue_pos = pos + 1;
+        await step('pop', 8, `${tag(tid)} CAS ok — own cell ${idx}`, 'hit');
+        flash('deq-val'); render();
+        break;
+      } else {
+        await step('pop', 8, `${tag(tid)} CAS failed (dequeue_pos is ${dequeue_pos}) — reload`, 'miss');
+        pos = dequeue_pos;
+      }
+    } else if (dif < 0) {
+      await step('pop', 10, `${tag(tid)} dif<0 → EMPTY, pop fails ✗`, 'fail');
+      return false;
+    } else {
+      await step('pop', 12, `${tag(tid)} dif>0 → another consumer mid-op, reload pos`, 'miss');
+      pos = dequeue_pos;
+    }
+  }
+  const slot = document.getElementById(`slot-${idx}`);
+  slot.classList.add('reading');
+  const item = buffer[idx];
+  await step('pop', 15, `${tag(tid)} out = cell.data = ${item}`, 'check');
+  buffer[idx] = null;
+  slot.classList.remove('reading');
+  seq[idx] = pos + MASK + 1;
+  await step('pop', 16, `${tag(tid)} cell.seq.store(${pos + MASK + 1}) — cell freed for next lap`, 'hit');
+  render();
+  await step('pop', 17, `${tag(tid)} return true ✓`, 'hit', 300);
+  return true;
+}
+
+// =====================================================================
+//  Dispatch
+// =====================================================================
+const MODES = {
+  spsc: { push: pushSPSC, pop: popSPSC },
+  mpsc: { push: pushMPSC, pop: popMPSC },
+  spmc: { push: pushSPMC, pop: popSPMC },
+  mpmc: { push: pushMPMC, pop: popMPMC },
+};
+
+// =====================================================================
+//  Button handlers
+// =====================================================================
+async function push(tid) {
+  if (busy) return;
+  busy = true;
+  await MODES[mode].push(tid);
+  busy = false;
+}
+async function pop(tid) {
+  if (busy) return;
+  busy = true;
+  await MODES[mode].pop(tid);
   busy = false;
 }
 
-async function tryPop() {
+async function race(kind) {
   if (busy) return;
   busy = true;
-  log(`◀ try_pop()`);
-  await sleep(400);
-
-  log(`  check #1: tail (${tail}) == cached_head_ (${cached_head}) ?`, 'check');
-  flash('chead-val');
-  await sleep(700);
-
-  if (tail === cached_head) {
-    log(`  yes — cache says EMPTY. refresh cached_head from real head...`, 'miss');
-    await sleep(700);
-    cached_head = head;
-    log(`  cached_head_ ← head (${head})`, 'miss');
-    flash('chead-val');
-    render();
-    await sleep(700);
-
-    log(`  check #2: tail (${tail}) == cached_head_ (${cached_head}) ?`, 'check');
-    await sleep(700);
-    if (tail === cached_head) {
-      log(`  yes — really EMPTY. pop fails ✗`, 'fail');
-      busy = false;
-      return;
-    } else {
-      log(`  no — data became available, continue`, 'hit');
-    }
-  } else {
-    log(`  no — cache says data available (skipped atomic load) ⚡`, 'hit');
-  }
-  await sleep(500);
-
-  const slot = document.getElementById(`slot-${tail}`);
-  slot.classList.add('reading');
-  const item = buffer[tail];
-  log(`  read buffer[${tail}] = ${item}`, 'check');
-  await sleep(700);
-  buffer[tail] = null;
-  slot.classList.remove('reading');
-
-  tail = (tail + 1) & MASK;
-  log(`  tail.store(${tail}, release)`, 'check');
-  flash('tail-val');
-  render();
-  await sleep(400);
+  raceActive = true;
+  log(`⚡ concurrent race — two ${kind === 'push' ? 'producers' : 'consumers'} contend on the same index`, 'action');
+  const fn = kind === 'push' ? MODES[mode].push : MODES[mode].pop;
+  const tids = kind === 'push' ? ['P1', 'P2'] : ['C1', 'C2'];
+  await Promise.all([fn(tids[0]), fn(tids[1])]);
+  raceActive = false;
   busy = false;
+  render();
 }
 
 async function autoRun() {
@@ -376,41 +830,124 @@ async function autoRun() {
   document.getElementById('stopBtn').disabled = false;
   log('— auto run started —');
 
-  const sequence = [
-    ...Array(5).fill('push'),
-    ...Array(3).fill('pop'),
-    ...Array(6).fill('push'),
-    ...Array(8).fill('pop'),
-  ];
-
-  for (const op of sequence) {
+  const cfg = MODE_CFG[mode];
+  const ops = ['push','push','push','push','push','pop','pop','pop','push','push','push','pop','pop','pop','pop','pop'];
+  let pi = 0, ci = 0;
+  for (const op of ops) {
     if (!autoRunning) break;
-    if (op === 'push') await tryPush(); else await tryPop();
+    if (op === 'push') { await push(cfg.producers[pi++ % cfg.producers.length]); }
+    else               { await pop(cfg.consumers[ci++ % cfg.consumers.length]); }
     if (!autoRunning) break;
     await sleep(200);
   }
-
   stopAuto();
 }
 
 function stopAuto() {
   if (autoRunning) log('— auto run stopped —');
   autoRunning = false;
-  document.getElementById('autoBtn').disabled = false;
-  document.getElementById('stopBtn').disabled = true;
+  const a = document.getElementById('autoBtn'), s = document.getElementById('stopBtn');
+  if (a) a.disabled = false;
+  if (s) s.disabled = true;
 }
 
 function reset() {
-  head = 0; tail = 0; cached_tail = 0; cached_head = 0;
-  buffer = new Array(CAPACITY).fill(null);
-  counter = 1;
+  stopAuto();
+  initState();
   logEl.innerHTML = '';
   render();
-  log('— reset —');
+  log(`— reset (${mode.toUpperCase()}) —`);
 }
 
-render();
-log('Ready. Click "try_push" / "try_pop" to step through. "Auto run" plays a sequence.');
+// =====================================================================
+//  Setup / mode switching
+// =====================================================================
+function initState() {
+  head = 0; tail = 0; cached_tail = 0; cached_head = 0;
+  enqueue_pos = 0; dequeue_pos = 0;
+  buffer = new Array(CAPACITY).fill(null);
+  ready = new Array(CAPACITY).fill(false);
+  seq = new Array(CAPACITY);
+  for (let i = 0; i < CAPACITY; i++) seq[i] = i;   // Vyukov init: cell i starts at seq i
+  counter = 1; busy = false; raceActive = false;
+}
+
+function buildStage(m) {
+  const cfg = MODE_CFG[m], v = VARS[m];
+  const pCount = cfg.producers.length, cCount = cfg.consumers.length;
+  const pHead = (pCount > 1 ? `▶ PRODUCERS ×${pCount}` : '▶ PRODUCER') + ' (try_push)';
+  const cHead = (cCount > 1 ? `◀ CONSUMERS ×${cCount}` : '◀ CONSUMER') + ' (try_pop)';
+  const rows = list => list.map(([id, name]) =>
+    `<div class="var"><span class="name">${name}</span><span class="val" id="${id}">0</span></div>`).join('');
+  document.getElementById('stage').innerHTML =
+    `<div class="thread producer"><h3>${pHead}</h3>${rows(v.prod)}</div>` +
+    `<div class="thread consumer"><h3>${cHead}</h3>${rows(v.cons)}</div>`;
+}
+
+function buildControls(m) {
+  const cfg = MODE_CFG[m];
+  let html = '';
+  cfg.producers.forEach(tid =>
+    html += `<button class="push" onclick="push('${tid}')">${tid}: try_push()</button>`);
+  cfg.consumers.forEach(tid =>
+    html += `<button class="pop" onclick="pop('${tid}')">${tid}: try_pop()</button>`);
+  if (cfg.racePush) html += `<button class="race" onclick="race('push')">⚡ Race push (P1·P2)</button>`;
+  if (cfg.racePop)  html += `<button class="race" onclick="race('pop')">⚡ Race pop (C1·C2)</button>`;
+  html += `<button id="autoBtn" onclick="autoRun()">Auto run</button>`;
+  html += `<button id="stopBtn" class="reset" onclick="stopAuto()" disabled>Stop</button>`;
+  html += `<button class="reset" onclick="reset()">Reset</button>`;
+  document.getElementById('controls').innerHTML = html;
+}
+
+function buildLegend(m) {
+  let html = '<span class="head">head / enqueue (producer)</span>' +
+             '<span class="tail">tail / dequeue (consumer)</span>';
+  if (m === 'spsc') html += '<span class="cached">cached pointers (local copies)</span>';
+  if (m === 'mpmc') html += '<span class="sq">s = per-cell sequence number</span>';
+  if (m === 'mpsc' || m === 'spmc') html += '<span class="head">● = slot published (ready)</span>';
+  document.getElementById('legend').innerHTML = html;
+}
+
+function renderCodeBlock(op, lines) {
+  document.getElementById(op + '-code').innerHTML = lines.map((ln, i) => {
+    const ci = ln.indexOf('//');
+    let h;
+    if (ci >= 0) h = escapeHtml(ln.slice(0, ci)) + `<span class="cmt">${escapeHtml(ln.slice(ci))}</span>`;
+    else h = escapeHtml(ln);
+    return `<div class="cl" id="${op}-line-${i}">${h}</div>`;
+  }).join('');
+}
+
+function setCode(m) {
+  renderCodeBlock('push', CODE[m].push);
+  renderCodeBlock('pop', CODE[m].pop);
+}
+
+function setupMode(m) {
+  stopAuto();
+  mode = m;
+  initState();
+  document.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t.dataset.mode === m));
+  document.getElementById('subtitle').textContent = SUBTITLE[m];
+  document.getElementById('push-title').textContent =
+    `try_push  —  ${m.toUpperCase()} producer`;
+  document.getElementById('pop-title').textContent =
+    `try_pop  —  ${m.toUpperCase()} consumer`;
+  buildStage(m);
+  buildControls(m);
+  buildLegend(m);
+  setCode(m);
+  logEl.innerHTML = '';
+  render();
+  log(`— ${m.toUpperCase()} mode —`, 'action');
+  log(HINT[m]);
+}
+
+// wire up tabs
+document.querySelectorAll('.tab').forEach(t =>
+  t.addEventListener('click', () => { if (!busy) setupMode(t.dataset.mode); }));
+
+setupMode('spsc');
 </script>
 </body>
 </html>
